@@ -1,0 +1,10 @@
+<MissionPackageManifest version="2">
+    <Configuration>
+        <Parameter name="uid" value="75cf5939-7875-45e6-b67e-4863085d291d"/>
+        <Parameter name="name" value="SafeSwimNZ-Package.zip"/>
+        <Parameter name="onReceiveDelete" value="true"/>
+    </Configuration>
+    <Contents>
+        <Content ignore="false" zipEntry="iconsets/SafeSwim NZ.zip" manifest="iconsets/SafeSwim NZ.zip"/>
+    </Contents>
+</MissionPackageManifest>

@@ -1,0 +1,40 @@
+name: Create Iconset Release
+
+on:
+  push:
+    tags:
+      - 'iconset-v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Create TAK Data Package
+      run: |
+        chmod +x scripts/create_TAKDataPackage.sh
+        ./scripts/create_TAKDataPackage.sh
+      working-directory: iconset
+
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Iconset Release ${{ github.ref }}
+        draft: false
+        prerelease: false
+      id: create_release
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./iconset/SafeSwimNZ-Package.zip
+        asset_name: SafeSwimNZ-Package.zip
+        asset_content_type: application/zip
