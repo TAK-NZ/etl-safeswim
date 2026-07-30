@@ -4,7 +4,11 @@
 
 ## Data Source
 
-[Safeswim](https://safeswim.org.nz) — `https://safeswim.org.nz/api/locations` (public, no authentication)
+[Safeswim](https://safeswim.org.nz) (public, no authentication):
+
+- `https://safeswim.org.nz/api/locations` — bulk list of all locations with current state (used every run)
+- `https://safeswim.org.nz/api/locations/{slug}` — per-location detail, including the full text of any
+  active safety alert (used only for locations with an active safety warning, per run)
 
 ~300+ swimming locations nationwide (Cape Reinga to Invercargill), covering water quality, lifeguard
 patrol status, and active safety hazards. Safeswim updates the underlying data roughly every 15 minutes.
@@ -17,8 +21,13 @@ patrol status, and active safety hazards. Safeswim updates the underlying data r
   only report `patrol` and/or `safety`. These locations are always shown (regardless of `Show All`) using
   a patrol-status icon rather than being misrepresented as good water quality.
 - `state.patrol` (`ON_DUTY`, `OFF_DUTY`) is only present when `patrolled: true`.
-- `state.safety` (`WARNING`, `WARNING+`) is only present when an active safety hazard exists, and takes
-  priority over patrol status for the icon overlay.
+- `state.safety` (`WARNING`, `WARNING+`) is only present when an active safety hazard exists. In combined
+  icon mode this adds a hazard-diamond overlay on top of whatever patrol-status badge already applies
+  (they're independent, combinable overlays — e.g. a lifeguarded beach with a hazard shows both the
+  lifeguard flag and the hazard diamond). The bulk list endpoint only reports this enum, not the actual
+  alert text — the ETL fetches the per-location detail endpoint for these locations to get the real alert
+  `title`/`description` (e.g. "Shellfish warning" with the full explanation), falling back to a generic
+  label if the detail request fails or returns no alerts.
 
 ## Configuration
 
@@ -46,11 +55,30 @@ Location: Kawakawa Bay
 More info: https://safeswim.org.nz/locations/kawakawa-bay
 ```
 
+One or more `Safety: {alert title}` lines (each followed by the alert's full description) are inserted
+between `Patrol` and `Location` when the location has an active safety hazard (`state.safety` is
+`WARNING` or `WARNING+`), e.g.:
+
+```
+Water Quality: Good
+Patrol: Not lifeguarded
+Safety: Shellfish warning
+Avoid collecting shellfish in this area due to a recent discharge from the Māngere Wastewater Treatment
+Plant that did not meet UV treatment standards. Shellfish samples are being analysed and results will be
+used to identify when the risk has passed.
+Location: Oruarangi Creek
+More info: https://safeswim.org.nz/locations/oruarangi-creek
+```
+
+If the detail endpoint has no alerts, or the request fails, this falls back to a generic
+`Safety: Safety hazard present` / `Safety: Elevated safety hazard` line based on `state.safety`.
+
 ### Metadata
 
 All raw fields from the API are preserved under `metadata` (`quality`, `patrol`, `safety`, `patrolled`,
 `slug`, `name`, `alternative_name`) for downstream consumers such as display-proxy filters and highlight
-templates.
+templates. When an active safety alert has full text available, it's also included as `metadata.alerts`
+(array of `{ title, description, from, to }`).
 
 ## Icons
 

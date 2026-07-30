@@ -3,6 +3,7 @@ import { fetch } from '@tak-ps/etl';
 import ETL, { Event, SchemaType, handler as internal, local, InvocationType, DataFlowType } from '@tak-ps/etl';
 
 const API_URL = 'https://safeswim.org.nz/api/locations';
+const DETAIL_API_URL = (slug: string) => `https://safeswim.org.nz/api/locations/${slug}`;
 
 // SafeSwim NZ iconset - see iconset/README.md and iconset/source/iconset.xml
 const ICONSET = 'c2ec216e-9bfc-461d-b77a-e2099ffa9fa7';
@@ -36,6 +37,18 @@ interface SafeswimResponse {
     locations: SafeswimLocation[];
 }
 
+interface SafeswimAlert {
+    id: string;
+    title: string;
+    description: string;
+    from: string;
+    to: string | null;
+}
+
+interface SafeswimLocationDetail {
+    alerts?: SafeswimAlert[];
+}
+
 type Feature = {
     id: string;
     type: 'Feature';
@@ -61,7 +74,13 @@ const OutputSchema = Type.Object({
     patrolled: Type.Boolean({ description: 'Whether the location is lifeguard-capable' }),
     slug: Type.String({ description: 'Safeswim location slug' }),
     name: Type.String({ description: 'Location name' }),
-    alternative_name: Type.Union([Type.String(), Type.Null()], { description: 'Alternative location name, if any' })
+    alternative_name: Type.Union([Type.String(), Type.Null()], { description: 'Alternative location name, if any' }),
+    alerts: Type.Optional(Type.Array(Type.Object({
+        title: Type.String(),
+        description: Type.String(),
+        from: Type.String(),
+        to: Type.Union([Type.String(), Type.Null()])
+    }), { description: 'Active safety alert(s) for this location, fetched from the per-location detail endpoint - only present when a safety warning is active' }))
 });
 
 function getPatrolIcon(patrolled: boolean, patrol: string | undefined, hasSafetyWarning: boolean): string {
@@ -77,8 +96,9 @@ function getPatrolIcon(patrolled: boolean, patrol: string | undefined, hasSafety
  * Determine the icon path for a location based on display mode, water
  * quality, patrol state, and safety state.
  *
- * Safety warnings take priority over patrol status for the overlay badge
- * in combined mode.
+ * A safety warning always adds the `.Hazard` diamond overlay on top of
+ * whatever patrol-status overlay already applies (they're independent,
+ * combinable badges in the iconset - not mutually exclusive).
  *
  * Roughly a quarter of Safeswim locations don't report a `quality` value at
  * all (surf-lifesaving patrolled beaches without council water-quality
@@ -118,13 +138,19 @@ function getIcon(
     else if (quality === 'RED' || quality === 'RED+') base = 'Red';
     else base = 'Green';
 
+    // Patrol status and hazard flag are independent, combinable overlays in
+    // the iconset (e.g. SW.Green.Lifeguarded.Hazard.png exists alongside
+    // SW.Green.Lifeguarded.png and SW.Green.Hazard.png), so build them up
+    // separately rather than treating hazard as a replacement for patrol
+    // status.
     let suffix = '';
-    if (hasSafetyWarning) {
-        suffix = '.Warning';
-    } else if (patrolled && patrol === 'ON_DUTY') {
+    if (patrolled && patrol === 'ON_DUTY') {
         suffix = '.Lifeguarded';
     } else if (patrolled) {
         suffix = '.LifeguardedOff';
+    }
+    if (hasSafetyWarning) {
+        suffix += '.Hazard';
     }
 
     return ICON_PREFIX + `SW.${base}${suffix}.png`;
@@ -135,6 +161,37 @@ function getPatrolLabel(patrolled: boolean, patrol?: string): string {
     if (patrol === 'ON_DUTY') return 'Lifeguards on duty';
     if (patrol === 'OFF_DUTY') return 'Lifeguards off duty';
     return 'Not lifeguarded';
+}
+
+function getSafetyLabel(safety: string): string {
+    if (safety === 'WARNING+') return 'Elevated safety hazard';
+    return 'Safety hazard present';
+}
+
+/**
+ * Fetch the active safety alert(s) for a location (title + description text
+ * shown on the Safeswim website, e.g. "Shellfish warning" details). This is
+ * only available on the per-location detail endpoint, not the bulk list
+ * endpoint, so it's only called for locations that already report a safety
+ * warning from the list response - keeping the number of extra requests
+ * small (currently a handful out of ~315 locations).
+ *
+ * Returns an empty array on any fetch/parse failure so callers can fall back
+ * to the generic safety label rather than failing the whole ETL run.
+ */
+async function fetchAlerts(slug: string): Promise<SafeswimAlert[]> {
+    try {
+        const res = await fetch(DETAIL_API_URL(slug));
+        if (!res.ok) {
+            console.warn(`warn - failed to fetch alert detail for ${slug}: ${res.status} ${res.statusText}`);
+            return [];
+        }
+        const detail = await res.json() as SafeswimLocationDetail;
+        return detail.alerts || [];
+    } catch (err) {
+        console.warn(`warn - error fetching alert detail for ${slug}:`, err);
+        return [];
+    }
 }
 
 export default class Task extends ETL {
@@ -192,6 +249,18 @@ export default class Task extends ETL {
             const patrolLabel = getPatrolLabel(loc.patrolled, patrol);
             const altSuffix = loc.alternative_name ? ` (aka ${loc.alternative_name})` : '';
 
+            // Fetch the actual alert text (e.g. "Shellfish warning" + full
+            // description) for locations with an active safety warning. Only
+            // a handful of locations have this at any given time, so the
+            // extra per-location request is cheap.
+            const alerts = hasSafetyWarning ? await fetchAlerts(loc.slug) : [];
+            const safetyLines = alerts.length > 0
+                ? alerts.flatMap(alert => [
+                    `Safety: ${alert.title}`,
+                    ...(alert.description ? [alert.description.trim()] : [])
+                ])
+                : (hasSafetyWarning && safety ? [`Safety: ${getSafetyLabel(safety)}`] : []);
+
             const metadata: Record<string, unknown> = {
                 quality: quality || 'UNKNOWN',
                 patrolled: loc.patrolled,
@@ -201,6 +270,14 @@ export default class Task extends ETL {
             };
             if (patrol !== undefined) metadata.patrol = patrol;
             if (safety !== undefined) metadata.safety = safety;
+            if (alerts.length > 0) {
+                metadata.alerts = alerts.map(alert => ({
+                    title: alert.title,
+                    description: alert.description,
+                    from: alert.from,
+                    to: alert.to
+                }));
+            }
 
             features.push({
                 id: `safeswim-${loc.slug}`,
@@ -216,6 +293,7 @@ export default class Task extends ETL {
                     remarks: [
                         `Water Quality: ${qualityLabel}`,
                         `Patrol: ${patrolLabel}`,
+                        ...safetyLines,
                         `Location: ${loc.name}${altSuffix}`,
                         `More info: https://safeswim.org.nz/locations/${loc.slug}`
                     ].join('\n'),
