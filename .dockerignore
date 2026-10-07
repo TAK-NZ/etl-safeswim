@@ -7,3 +7,5 @@ test/
 .env.*
 *.md
 docs/
+iconset/
+etl-safeswim.png
