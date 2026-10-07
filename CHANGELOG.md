@@ -10,7 +10,7 @@
 - Require Node 24 (`engines` `>= 24`), and use Node 24 in the deploy workflow's build job (it was still on Node 18), matching the Lambda base image and lint workflow
 - Update dependencies: `@tak-ps/etl` 10.22.2 (minimum raised to `^10.13.0`, required for `capabilities.json`), `eslint` 10.12.0, `typescript-eslint` 8.71.1 and new dev dependency `tsx` 4.23.15. `npm audit` now reports 0 vulnerabilities (6 before, including 1 critical). `typescript` stays on 6.0.3 as `typescript-eslint` still limits supported versions to below 6.1.0
 - Remove the `fast-xml-parser` override: with the updated dependencies the package is no longer in the dependency tree, so the pin had no effect
-- Add a `.dockerignore` so `.git`, `.github`, `node_modules`, `dist`, `test`, `docs`, `.env*` and markdown files are kept out of the image build context. `capabilities.json`, `task.ts`, `package*.json` and `tsconfig.json` stay in the context
+- Add a `.dockerignore` so `.git`, `.github`, `node_modules`, `dist`, `test`, `docs`, `iconset` (icon sources, packaged separately by the icon set release workflow), the `etl-safeswim.png` logo, `.env*` and markdown files are kept out of the image build context. `capabilities.json`, `task.ts`, `package*.json` and `tsconfig.json` stay in the context
 - The icon set release workflow (`iconset-release.yml`) is intentionally unchanged
 
 ## v1.0.0
